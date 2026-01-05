@@ -1,14 +1,37 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// IMAGE TO EXCEL - OCR-based table extraction
+// IMAGE TO EXCEL - OCR-based table extraction (Optional Feature)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const Tesseract = require('tesseract.js');
-const helpers = require('../../utils/helpers');
+// Lazy load tesseract.js - only when needed
+let Tesseract = null;
 
 class ImageToExcel {
   constructor() {
     this.worker = null;
     this.initialized = false;
+    this.available = false;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CHECK AVAILABILITY
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async checkAvailability() {
+    if (Tesseract !== null) {
+      return this.available;
+    }
+
+    try {
+      Tesseract = require('tesseract.js');
+      this.available = true;
+      console.log('✅ OCR (tesseract.js) is available');
+    } catch (error) {
+      Tesseract = false;
+      this.available = false;
+      console.log('⚠️ OCR (tesseract.js) not available - Image extraction disabled');
+    }
+
+    return this.available;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -16,10 +39,21 @@ class ImageToExcel {
   // ─────────────────────────────────────────────────────────────────────────
 
   async initialize() {
-    if (this.initialized) return;
+    if (this.initialized) return true;
 
-    this.worker = await Tesseract.createWorker('ind+eng');
-    this.initialized = true;
+    const available = await this.checkAvailability();
+    if (!available) {
+      return false;
+    }
+
+    try {
+      this.worker = await Tesseract.createWorker('ind+eng');
+      this.initialized = true;
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize OCR:', error.message);
+      return false;
+    }
   }
 
   async terminate() {
@@ -43,8 +77,21 @@ class ImageToExcel {
   async extract(image, options = {}) {
     const startTime = Date.now();
 
+    // Check if OCR is available
+    const available = await this.checkAvailability();
+    if (!available) {
+      return {
+        success: false,
+        error: 'OCR feature not available. Please install tesseract.js: npm install tesseract.js',
+        extractionTime: Date.now() - startTime,
+      };
+    }
+
     try {
-      await this.initialize();
+      const initialized = await this.initialize();
+      if (!initialized) {
+        throw new Error('Failed to initialize OCR engine');
+      }
 
       // Perform OCR
       const { data } = await this.worker.recognize(image);
@@ -192,11 +239,22 @@ class ImageToExcel {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
+   * Check if OCR is available
+   */
+  async isAvailable() {
+    return await this.checkAvailability();
+  }
+
+  /**
    * Validate OCR result quality
    */
   validateQuality(result) {
     const issues = [];
     
+    if (!result.success) {
+      return { isGoodQuality: false, issues: [{ type: 'error', message: result.error }] };
+    }
+
     if (result.confidence < 80) {
       issues.push({
         type: 'low_confidence',
